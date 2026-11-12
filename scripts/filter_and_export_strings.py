@@ -114,6 +114,13 @@ def classify_string(
     if stripped.startswith(("/api/", "api/")) or "/v1/" in stripped or "/v2/" in stripped:
         return "IGNORE", "api_endpoint_or_path"
 
+    # 8b. Domain names, url fragments, query params, or user-agent strings
+    if len(stripped.split()) <= 2:
+        if any(d in stripped.lower() for d in [".com/", ".org/", ".net/", "discord.com", "discordapp.com", "api/webhooks", ".com"]):
+            return "IGNORE", "domain_or_url_path"
+        if re.search(r"^[A-Za-z0-9\-_]+/[0-9.]+$", stripped) or "wait=" in stripped or stripped.startswith("attachment_"):
+            return "IGNORE", "technical_token"
+
     # 9. Network / HTTP headers / MIME types
     if stripped in HTTP_AND_NETWORK_TERMS:
         return "IGNORE", "http_or_mime_token"
@@ -366,39 +373,56 @@ def process_and_export(
 
     # Dynamically load existing non-translatable strings to preserve project definitions
     existing_donottranslate = load_existing_resources(donottranslate_path)
+    existing_translatable: Dict[str, str] = {}
 
-    # Check if target translatable strings.xml has any explicit translatable="false" entries
+    # Check if target translatable strings.xml exists and parse existing strings
     if translatable_path.exists():
         try:
             tree = ET.parse(translatable_path)
             for elem in tree.getroot().findall("string"):
+                name = elem.get("name")
+                val = elem.text or ""
+                if not name:
+                    continue
                 if elem.get("translatable", "").lower() == "false":
-                    name = elem.get("name")
-                    val = elem.text or ""
-                    if name and name not in existing_donottranslate:
+                    if name not in existing_donottranslate:
                         existing_donottranslate[name] = val
-        except Exception:
-            pass
+                else:
+                    existing_translatable[name] = val
+        except Exception as e:
+            print(f"[WARN] Failed to parse {translatable_path}: {e}", file=sys.stderr)
 
-    used_keys: Set[str] = set(existing_donottranslate.keys())
+    used_keys: Set[str] = set(existing_donottranslate.keys()) | set(existing_translatable.keys())
 
     donottranslate_list: List[Dict[str, str]] = [
         {"key": k, "value": v} for k, v in existing_donottranslate.items()
     ]
-    translatable_list: List[Dict[str, str]] = []
+    translatable_list: List[Dict[str, str]] = [
+        {"key": k, "value": v, "original": v, "reason": "existing", "occurrences": 1}
+        for k, v in existing_translatable.items()
+    ]
+
+    newly_added_donottranslate: List[Dict[str, str]] = []
+    newly_added_translatable: List[Dict[str, str]] = []
 
     report: Dict[str, Any] = {
         "total_extracted": len(all_strings),
         "ignored_count": 0,
         "non_translatable_count": len(donottranslate_list),
-        "translatable_count": 0,
+        "translatable_count": len(translatable_list),
         "duplicate_count": 0,
         "ignored": [],
         "non_translatable": donottranslate_list,
-        "translatable": []
+        "translatable": list(translatable_list)
     }
 
-    seen_xml_values: Set[str] = {v.strip() for v in existing_donottranslate.values()}
+    seen_xml_values: Dict[str, str] = {}
+    for k, v in existing_donottranslate.items():
+        seen_xml_values[v.strip()] = k
+        seen_xml_values[escape_for_android_xml(v).strip()] = k
+    for k, v in existing_translatable.items():
+        seen_xml_values[v.strip()] = k
+        seen_xml_values[escape_for_android_xml(v).strip()] = k
 
     for item in all_strings:
         raw_text = item["text"]
@@ -419,18 +443,22 @@ def process_and_export(
         xml_val = escape_for_android_xml(raw_text)
         normalized_xml = xml_val.strip()
 
-        # Strict duplicate detection by escaped XML value
+        # Check if already present in existing resources
         if normalized_xml in seen_xml_values:
+            existing_key = seen_xml_values[normalized_xml]
             report["duplicate_count"] += 1
-            report["ignored"].append({
-                "text": raw_text,
-                "reason": "duplicate_value",
-                "count": item["count"],
-                "sample_file": occurrences[0]["file"] if occurrences else ""
-            })
+            entry = {
+                "key": existing_key,
+                "value": xml_val,
+                "original": raw_text,
+                "reason": "existing_match",
+                "occurrences": len(occurrences)
+            }
+            if cat == "NON_TRANSLATABLE":
+                pass
+            else:
+                report["translatable"].append(entry)
             continue
-
-        seen_xml_values.add(normalized_xml)
 
         base_key = generate_resource_key(raw_text)
         candidate_key = base_key
@@ -440,6 +468,7 @@ def process_and_export(
             counter += 1
 
         used_keys.add(candidate_key)
+        seen_xml_values[normalized_xml] = candidate_key
 
         entry = {
             "key": candidate_key,
@@ -452,13 +481,35 @@ def process_and_export(
         if cat == "NON_TRANSLATABLE":
             report["non_translatable_count"] += 1
             donottranslate_list.append(entry)
+            newly_added_donottranslate.append(entry)
         else:
             report["translatable_count"] += 1
             translatable_list.append(entry)
             report["translatable"].append(entry)
+            newly_added_translatable.append(entry)
 
-    translatable_xml_content = build_translatable_xml(translatable_list)
-    donottranslate_xml_content = build_donottranslate_xml(donottranslate_list)
+    # Prepare XML contents: append to existing file if present, else build from scratch
+    if translatable_path.exists():
+        existing_text = translatable_path.read_text(encoding="utf-8")
+        if newly_added_translatable and "</resources>" in existing_text:
+            insert_lines = [f'    <string name="{it["key"]}">{it["value"]}</string>' for it in newly_added_translatable]
+            insert_block = "\n".join(insert_lines) + "\n"
+            translatable_xml_content = existing_text.replace("</resources>", f"{insert_block}</resources>")
+        else:
+            translatable_xml_content = existing_text
+    else:
+        translatable_xml_content = build_translatable_xml(translatable_list)
+
+    if donottranslate_path.exists():
+        existing_text = donottranslate_path.read_text(encoding="utf-8")
+        if newly_added_donottranslate and "</resources>" in existing_text:
+            insert_lines = [f'    <string name="{it["key"]}" translatable="false">{it["value"]}</string>' for it in newly_added_donottranslate]
+            insert_block = "\n".join(insert_lines) + "\n"
+            donottranslate_xml_content = existing_text.replace("</resources>", f"{insert_block}</resources>")
+        else:
+            donottranslate_xml_content = existing_text
+    else:
+        donottranslate_xml_content = build_donottranslate_xml(donottranslate_list)
 
     report_path.parent.mkdir(parents=True, exist_ok=True)
     for p in [report_path.parent] + list(report_path.parent.parents):

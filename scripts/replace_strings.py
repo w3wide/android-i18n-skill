@@ -96,7 +96,7 @@ def is_safe_composable_callsite(line: str) -> bool:
         return False
     if "showSnackbar" in line or "SimpleDateFormat" in line:
         return False
-    if "Log." in line or "testTag" in line or "contentType" in line or "Route(" in line:
+    if "Log." in line or "Crashlytics" in line or "testTag" in line or "contentType" in line or "Route(" in line:
         return False
     if "LocalClipboardManager" in line or "clipboard." in line:
         return False
@@ -198,9 +198,10 @@ def replace_in_code_file(
     for line_idx, line in enumerate(lines, 1):
         stripped = line.strip()
 
-        if stripped.startswith("private fun ") or stripped.startswith("fun "):
+        is_func_or_class = bool(re.search(r'\b(?:(?:public|private|protected|internal|override|suspend|final|open|inline)\s+)*fun\b', stripped)) or "enum class " in stripped
+        if is_func_or_class:
             prev_line = lines[line_idx - 2].strip() if line_idx > 1 else ""
-            if not stripped.startswith("@Composable") and not prev_line.startswith("@Composable"):
+            if not stripped.startswith("@Composable") and not prev_line.startswith("@Composable") and "@Composable" not in stripped:
                 in_non_composable_func = True
                 brace_depth = 0
 
@@ -212,6 +213,10 @@ def replace_in_code_file(
             continue
 
         if line and not line[0].isspace() and not stripped.startswith("@Composable") and not stripped.startswith("fun ") and not is_java:
+            new_lines.append(line)
+            continue
+
+        if not is_java and "ui" not in file_path.parts and not ("setText(" in line or "getString(" in line or "Toast.makeText(" in line):
             new_lines.append(line)
             continue
 

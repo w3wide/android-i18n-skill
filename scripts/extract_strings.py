@@ -31,6 +31,7 @@ LOG_CALL_PATTERNS = [
     r"Timber\.[deiwv]",
     r"println\s*\(",
     r"print\s*\(",
+    r"Crashlytics",
 ]
 
 

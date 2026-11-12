@@ -116,7 +116,7 @@ def verify_sources(src_root: Path, resource_map: Dict[str, Dict[str, Any]]) -> D
         r"(?:stringResource|getString)\s*\(\s*R\.string\.([a-zA-Z0-9_]+)(?:\s*,\s*([^)]+))?\s*\)"
     )
     xml_res_pattern = re.compile(r'@string/([a-zA-Z0-9_]+)')
-    hardcoded_text_pattern = re.compile(r'Text\s*\(\s*"([^"]{2,})"')
+    hardcoded_text_pattern = re.compile(r'Text\s*\(\s*(?:text\s*=\s*)?"([^"]{2,})"')
     hardcoded_xml_pattern = re.compile(r'(?:android:text|android:hint)\s*=\s*"([^@?][^"]+)"')
 
     for file_path in src_root.rglob("*"):
