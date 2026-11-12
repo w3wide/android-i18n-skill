@@ -49,7 +49,14 @@ android-i18n-skill/
 
 ## 🚀 Installation & Setup
 
-### Option 1: Install as Antigravity / Agent Skill
+### Quick Install (Recommended)
+Install directly into your AI agent environment (Antigravity, Claude Code, Cursor) using the Skills CLI:
+
+```bash
+npx skills add w3wide/android-i18n-skill
+```
+
+### Manual Install as Agent Skill
 Clone directly into your global agent skills directory or project `.agents/skills`:
 
 ```bash

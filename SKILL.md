@@ -10,6 +10,8 @@ description: >-
 
 Universal runbook and toolset to extract hardcoded strings from any Android codebase, filter out technical artifacts, separate non-translatable identifiers into `strings_donottranslate.xml`, generate clean `strings.xml` resources, safely replace call sites across Compose and Views, and deterministically verify resource integrity.
 
+> **Install via CLI**: `npx skills add w3wide/android-i18n-skill`
+
 ---
 
 ## When to Use This Skill
